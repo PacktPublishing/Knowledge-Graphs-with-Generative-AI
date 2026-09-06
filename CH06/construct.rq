@@ -1,0 +1,52 @@
+# Chapter 6 — SPARQL CONSTRUCT transformational rules for derived knowledge.
+#
+# Three rules, each delimited by a section marker (see reason.py) so it can pull
+# them out individually (file.rq#name). Each shares the PREFIX header below.
+# These mint DERIVED triples on our own terms — transformation, aggregation,
+# and a decision-table row — work that OWL and SWRL cannot express.
+
+PREFIX c360: <https://ontobricks.example/customer360#>
+PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
+
+# === residency ===
+# TRANSFORMATION rule (project bible canonical rule):
+# every customer in a GDPR-governed region carries an EU-residency constraint.
+# Feeds the access-control / governance work of Chapter 10.
+CONSTRUCT {
+    ?customer c360:hasResidencyConstraint c360:EU_Residency .
+}
+WHERE {
+    ?customer c360:isLocatedIn ?region .
+    ?region   c360:governedBy  c360:GDPR .
+}
+
+# === spend ===
+# AGGREGATE rule: sum each customer's order line values into totalOrderValue.
+# Counts/sums are NOT expressible in OWL or SWRL — this is why SPARQL CONSTRUCT
+# is the most-used reasoning tool in real production graphs.
+CONSTRUCT {
+    ?customer c360:totalOrderValue ?total .
+}
+WHERE {
+    SELECT ?customer (SUM(?lineValue) AS ?total)
+    WHERE {
+        ?customer c360:placed    ?order .
+        ?order    c360:contains  ?product .
+        ?product  c360:lineValue ?lineValue .
+    }
+    GROUP BY ?customer
+}
+
+# === priority ===
+# DECISION-TABLE row (DMN-style), compiled to CONSTRUCT:
+#   (segment = Premium) AND (ticket escalated)  =>  derivedPriority "HIGH"
+# A full table is one such rule per row; business users own the grid, glue code
+# compiles each row mechanically. See chapter §6.4 sidebar.
+CONSTRUCT {
+    ?ticket c360:derivedPriority "HIGH" .
+}
+WHERE {
+    ?customer a            c360:PremiumCustomer ;   # derived by OWL closure
+              c360:raised  ?ticket .
+    ?ticket   c360:escalatedTo ?anything .
+}

@@ -54,8 +54,6 @@ products.show(truncate=False)
 # --- Verification assertion: the canonical retention-risk facts must hold. ---
 facts = {row["predicate"]: row["object"]
          for row in g.filter(F.col("subject") == F.lit(cust)).collect()}
-assert facts.get(BASE + "isLocatedIn") == BASE + "RegionEMEA", \
-    "Customer4471 should be located in RegionEMEA"
-assert float(facts.get(BASE + "hasLifetimeValue", 0)) > 15000, \
-    "Customer4471 should have LTV > 15000 (premium)"
+assert facts.get(BASE + "isLocatedIn") == BASE + "RegionEMEA", "Customer4471 should be located in RegionEMEA"
+assert float(facts.get(BASE + "hasLifetimeValue", 0)) > 15000, "Customer4471 should have LTV > 15000 (premium)"
 print("\nVerification passed: Customer4471 is a premium EMEA customer in the graph.")

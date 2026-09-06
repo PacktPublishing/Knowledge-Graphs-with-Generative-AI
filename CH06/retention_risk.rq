@@ -1,0 +1,19 @@
+# Chapter 6 — retention-risk rule, executable form (mirrors retention_risk.swrl).
+#
+# SWRL-equivalent business rule run as a SPARQL CONSTRUCT so it executes
+# anywhere rdflib does. CHAINS on OWL 2 RL closure: the PremiumCustomer type in
+# the body is DERIVED in Step 2, not asserted. Run OWL closure before this.
+
+PREFIX c360: <https://ontobricks.example/customer360#>
+
+CONSTRUCT {
+    ?c a c360:RetentionRisk .
+}
+WHERE {
+    ?c  a                c360:PremiumCustomer ;   # derived by OWL closure (Step 2)
+        c360:status      "active" ;
+        c360:isLocatedIn ?r ;
+        c360:raised      ?t .
+    ?r  c360:governedBy  c360:GDPR .
+    ?t  c360:escalatedTo ?a .
+}

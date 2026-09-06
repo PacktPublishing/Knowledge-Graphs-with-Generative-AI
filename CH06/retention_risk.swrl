@@ -1,0 +1,28 @@
+# Chapter 6 — the retention-risk rule, in SWRL's human-readable form.
+#
+# This file records the canonical rule (project bible) in standard SWRL syntax,
+# so the INTENT is captured portably. SWRL tooling is patchy across engines, so
+# the lab EXECUTES the identical rule as the SPARQL CONSTRUCT in retention_risk.rq
+# (which runs anywhere rdflib does). Keep the two in sync.
+#
+# Canonical rule (bible §"Canonical rules"):
+#   An active PremiumCustomer in a GDPR region with an escalated ticket
+#   = a retention risk.
+#
+# This rule CHAINS on OWL 2 RL closure: PremiumCustomer(?c) only holds because
+# the reasoner derived it from hasLifetimeValue > 15000. Fire OWL closure first.
+
+Prefixes:
+  c360: <https://ontobricks.example/customer360#>
+
+Rule "RetentionRisk":
+  # Body (the "if" — atoms joined by ∧):
+  Customer(?c)
+    ∧ PremiumCustomer(?c)          # derived by OWL closure, not asserted
+    ∧ status(?c, "active")
+    ∧ isLocatedIn(?c, ?r)
+    ∧ governedBy(?r, c360:GDPR)
+    ∧ raised(?c, ?t)
+    ∧ escalatedTo(?t, ?a)
+  # Head (the "then" — assert when the whole body matches):
+  → RetentionRisk(?c)

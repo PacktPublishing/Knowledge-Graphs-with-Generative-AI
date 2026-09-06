@@ -10,8 +10,7 @@ the resulting RDF validation report into graph-native rows that a Databricks SQL
 Consumes : the materialized Customer 360 triples from Chapter 4
            (Delta table ontobricks.customer360.triples, or a local .ttl slice).
 Produces : Delta table ontobricks.customer360.validation_results
-           (one row per sh:ValidationResult), the chapter's headline artifact
-           alongside shapes.ttl.
+           (one row per sh:ValidationResult), the chapter's headline artifact alongside shapes.ttl.
 
 Run locally (no Databricks needed) for a quick conformance check:
     python validate.py
@@ -159,4 +158,5 @@ def main():
 
 
 if __name__ == "__main__":
+    sys.argv = ["--break"]
     main()
