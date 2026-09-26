@@ -81,6 +81,120 @@ print("Declared classes:", classes)
 
 # COMMAND ----------
 
+# DBTITLE 1,Interlude — Common Turtle Errors
+# MAGIC %md
+# MAGIC ### Interlude — Common Turtle Errors
+# MAGIC
+# MAGIC Before moving on to reasoning, it is worth seeing what goes wrong when an ontology file is **not** well-formed. The cell below deliberately triggers three errors you will encounter regularly:
+# MAGIC
+# MAGIC | # | Error | Symptom | Fix |
+# MAGIC | --- | --- | --- | --- |
+# MAGIC | 1 | **Missing statement terminator (`.`)** | `BadSyntax` exception at parse time | End every triple block with a period |
+# MAGIC | 2 | **Undefined namespace prefix** | `BadSyntax` — the parser does not recognise the prefix | Add the missing `@prefix` declaration |
+# MAGIC | 3 | **Property-name typo** | No crash — the query silently returns zero rows | List all predicates with SPARQL and compare against the ontology schema |
+# MAGIC
+# MAGIC Errors 1 and 2 are loud: `g.parse()` raises immediately. Error 3 is the dangerous one — RDF's open-world assumption means *any* URI is valid, so a one-character typo creates a different property and your downstream queries quietly return nothing.
+
+# COMMAND ----------
+
+# DBTITLE 1,Common Turtle errors and how to repair them
+# ── Common Turtle / OWL errors you will hit (and how to fix them) ──────────
+# Each snippet deliberately triggers an error in a *tiny* in-memory graph so
+# you can see the exact exception rdflib raises, then shows the corrected form.
+
+from rdflib import Graph
+from io import StringIO
+
+def try_parse(label, bad_ttl, good_ttl):
+    """Try to parse bad Turtle, print the error, then parse the fix."""
+    print(f"\n{'='*70}")
+    print(f"Error #{label}")
+    print('-'*70)
+    try:
+        Graph().parse(StringIO(bad_ttl), format="turtle")
+        print("  ⚠ No error raised (unexpected).")
+    except Exception as e:
+        # Show only the first two lines of the traceback — enough to diagnose
+        msg = str(e).split('\n')[:2]
+        print(f"  RAISED → {type(e).__name__}: {msg[0]}")
+    # Now parse the corrected version to prove the fix works
+    g_ok = Graph().parse(StringIO(good_ttl), format="turtle")
+    print(f"  ✔ Fixed version parsed OK ({len(g_ok)} triples).")
+
+
+# ── Error 1: Missing statement terminator (period) ────────────────────────
+# Forgetting the "." at the end of a triple block is the #1 beginner mistake.
+bad_1 = """
+@prefix ex: <http://example.org/> .
+ex:Alice a ex:Person ;
+    ex:name "Alice"           # ← missing period here
+ex:Bob   a ex:Person .        # parser sees this as a continuation → crash
+"""
+good_1 = """
+@prefix ex: <http://example.org/> .
+ex:Alice a ex:Person ;
+    ex:name "Alice" .          # ← period added
+ex:Bob   a ex:Person .
+"""
+try_parse("1 — Missing statement terminator (.)", bad_1, good_1)
+
+
+# ── Error 2: Undefined namespace prefix ───────────────────────────────────
+# Using a prefix you never declared with @prefix is a syntax error.
+bad_2 = """
+@prefix ex: <http://example.org/> .
+ex:Alice foaf:name "Alice" .   # ← 'foaf:' was never declared
+"""
+good_2 = """
+@prefix ex:   <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .   # ← declare the prefix
+ex:Alice foaf:name "Alice" .
+"""
+try_parse("2 — Undefined namespace prefix", bad_2, good_2)
+
+
+# ── Error 3: Property-name typo — the silent killer ──────────────────────
+# RDF is an open world: any URI is valid, so a typo creates a *different*
+# property instead of raising an error.  Your SPARQL query quietly returns
+# zero rows and you think the data is missing.
+bad_3 = """
+@prefix ex:  <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+ex:Alice a ex:Customer ;
+    ex:hasLifetimevalue "18400"^^xsd:decimal .   # ← lowercase 'v' typo!
+"""
+good_3 = """
+@prefix ex:  <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+ex:Alice a ex:Customer ;
+    ex:hasLifetimeValue "18400"^^xsd:decimal .   # ← correct camelCase
+"""
+
+g_bad  = Graph().parse(StringIO(bad_3),  format="turtle")
+g_good = Graph().parse(StringIO(good_3), format="turtle")
+
+# The query uses the correct property name — the typo silently returns nothing
+filter_query = """
+    PREFIX ex: <http://example.org/>
+    SELECT ?c WHERE { ?c ex:hasLifetimeValue ?v . FILTER(?v > 15000) }
+"""
+hits_bad  = len(list(g_bad.query(filter_query)))
+hits_good = len(list(g_good.query(filter_query)))
+
+print(f"\n{'='*70}")
+print("Error #3 — Property-name typo (silent, no crash)")
+print('-'*70)
+print(f"  'hasLifetimevalue' (lowercase v) → FILTER matches: {hits_bad}  ← silent failure!")
+print(f"  'hasLifetimeValue' (camelCase)    → FILTER matches: {hits_good} ✔")
+print("  Fix: use SPARQL to list all predicates in the graph and compare")
+print("        against your ontology — mismatches reveal typos immediately.")
+
+print(f"\n{'='*70}")
+print("Takeaway: most ontology bugs are punctuation, namespace, or naming issues.")
+print("Run g.parse() early and cross-check property URIs against the schema.")
+
+# COMMAND ----------
+
 # DBTITLE 1,Observation — Parse results
 # MAGIC %md
 # MAGIC > **Observation:** 128 triples parsed and all expected classes declared. The ontology includes an anonymous class (`n28b1...`) — this is the OWL restriction node for the `PremiumCustomer` equivalentClass axiom (`hasLifetimeValue > 15000`). It is normal and expected; OWL restrictions are modelled as blank nodes in RDF.
