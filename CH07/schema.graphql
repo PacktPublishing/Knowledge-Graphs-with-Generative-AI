@@ -1,0 +1,83 @@
+scalar DateTime
+
+interface CustomerLike {
+  id: ID!
+  placed: [Order!]
+  isLocatedIn: [Region!]
+  hasAccount: [Account!]
+  raised: [SupportTicket!]
+  hadInteraction: [Interaction!]
+  lifetimeValue: Float
+}
+
+type Account {
+  id: ID!
+  ownedBy: Agent
+}
+
+type Agent {
+  id: ID!
+}
+
+type Batch {
+  id: ID!
+  recalled: Boolean
+}
+
+type Customer implements CustomerLike {
+  id: ID!
+  placed: [Order!]
+  isLocatedIn: [Region!]
+  hasAccount: [Account!]
+  raised: [SupportTicket!]
+  hadInteraction: [Interaction!]
+  lifetimeValue: Float
+}
+
+type Interaction {
+  id: ID!
+}
+
+type Order {
+  id: ID!
+  placedBy: [Customer!]
+  contains: [Product!]
+}
+
+type PremiumCustomer implements CustomerLike {
+  id: ID!
+  placed: [Order!]
+  isLocatedIn: [Region!]
+  hasAccount: [Account!]
+  raised: [SupportTicket!]
+  hadInteraction: [Interaction!]
+  lifetimeValue: Float
+}
+
+type Product {
+  id: ID!
+  partOfBatch: Batch
+}
+
+type Region {
+  id: ID!
+  governedBy: [Regulation!]
+}
+
+type Regulation {
+  id: ID!
+}
+
+type SupportTicket {
+  id: ID!
+  escalatedTo: [Account!]
+}
+
+type RetentionRisk          { customer: PremiumCustomer!  atRiskIn: Region!  owningAgent: Agent! }
+type RecalledBatchExposure  { customer: PremiumCustomer!  regulation: Regulation!  ticket: SupportTicket!
+                              product: Product!  account: Account!  owner: Agent! }
+type Query {
+  premiumCustomers: [PremiumCustomer!]!
+  recalledBatchExposure: [RecalledBatchExposure!]!   # the capstone question, one field
+  retentionRisks: [RetentionRisk!]!
+}

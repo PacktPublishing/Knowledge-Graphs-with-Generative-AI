@@ -1,0 +1,191 @@
+# queries.rq
+# ---------------------------------------------------------------------------
+# Chapter 7 — Querying Knowledge: SPARQL, Cypher, and GraphQL Projection
+# Knowledge Graphs for AI Agents — Benoit Cayla
+#
+# CONSUMES : the ENRICHED Customer 360 graph produced in Chapter 6
+#            (materialized triples + OWL 2 RL closure + SWRL chaining +
+#             the construct.rq retention-risk rule). In a notebook this is
+#            an rdflib.Graph; against the platform it is the Lakebase /
+#            triple-store SPARQL endpoint.
+# PRODUCES : the standing query set the GraphQL resolvers (server.py) call,
+#            and the multi-hop "capstone" question the copilot answers in Ch14.
+#
+# Every query below is a named block. kgquery.load_named_queries() loads
+# this file, splits on the "# === name ===" markers, and executes each against
+# the enriched graph. Prefixes are declared once per query so each block is
+# independently runnable in any SPARQL endpoint.
+#
+# Namespaces (verbatim from the project bible):
+#   c360: https://ontobricks.example/customer360#
+#   dt:   https://ontobricks.example/digitaltwin#
+# ---------------------------------------------------------------------------
+
+
+# === q1_premium_customers ===
+# SPARQL by example #1 — basic pattern matching.
+# "List every premium customer with their lifetime value and home region."
+# A premium customer is INFERRED in Chapter 6 (LTV > 15000), so we simply ask
+# for the class membership the reasoner already wrote down. Three triple
+# patterns sharing the variable ?c form the subgraph shape we want.
+PREFIX c360: <https://ontobricks.example/customer360#>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT ?c ?ltv ?region WHERE {
+    ?c    rdf:type            c360:PremiumCustomer ;
+          c360:hasLifetimeValue ?ltv ;
+          c360:isLocatedIn      ?region .
+}
+ORDER BY DESC(?ltv)
+
+
+# === q2_regulated_premium ===
+# SPARQL by example #2 — pattern matching across classes with a FILTER.
+# "Which premium customers sit in a region governed by GDPR, and what is the
+#  region's regulation?" Note the chain region -> regulation, and the FILTER
+# that keeps only GDPR-governed regions.
+PREFIX c360: <https://ontobricks.example/customer360#>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT ?c ?region ?regulation WHERE {
+    ?c      rdf:type        c360:PremiumCustomer ;
+            c360:isLocatedIn ?region .
+    ?region c360:governedBy  ?regulation .
+    FILTER (?regulation = c360:GDPR)
+}
+
+
+# === q3_property_path_orders_to_products ===
+# SPARQL by example #3 — PROPERTY PATHS.
+# "For a given customer, what products has she ordered?" Customer -> Order ->
+# Product is two hops; the path c360:placed/c360:contains walks both in one
+# step without naming the intermediate Order. This is the Ch1 traversal idea
+# expressed as a real property path.
+PREFIX c360: <https://ontobricks.example/customer360#>
+
+SELECT DISTINCT ?product WHERE {
+    c360:Customer4471 c360:placed/c360:contains ?product .
+}
+
+
+# === q4_recalled_batch_path ===
+# SPARQL by example #4 — a longer property path into the digital-twin layer.
+# "Which customers have ordered a product that belongs to the recalled batch?"
+# Path: customer -> order -> product -> batch, then FILTER on the recall flag.
+# dt:partOfBatch lives in the digital-twin namespace (Part 3), present here
+# because Step 0 of the lab adds batch membership to the enriched graph.
+PREFIX c360: <https://ontobricks.example/customer360#>
+PREFIX dt:   <https://ontobricks.example/digitaltwin#>
+
+SELECT DISTINCT ?c ?product ?batch WHERE {
+    ?c       c360:placed/c360:contains ?product .
+    ?product dt:partOfBatch            ?batch .
+    ?batch   dt:recalled               true .
+}
+
+
+# === q5_capstone_multihop ===
+# THE CANONICAL CAPSTONE QUESTION (introduced in Chapter 1, answered live by
+# the copilot in Chapter 14):
+#   "Which premium customers in regulated regions have an open escalation AND a
+#    product from the recalled batch -- and who owns each account?"
+# This is the 5-hop traversal Chapter 1 promised in SPARQL. It combines:
+#   - inferred class membership (?c a c360:PremiumCustomer)         [reasoning]
+#   - region -> regulation                                          [hop]
+#   - customer -> raised -> ticket, with an open/escalated status   [hop+filter]
+#   - customer -> placed -> order -> contains -> product            [property path]
+#   - product -> partOfBatch -> recalled                            [hop+filter]
+#   - customer -> hasAccount -> account -> owner                    [hop, the "who owns it"]
+PREFIX c360: <https://ontobricks.example/customer360#>
+PREFIX dt:   <https://ontobricks.example/digitaltwin#>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+SELECT DISTINCT ?customer ?regulation ?ticket ?product ?account ?owner WHERE {
+    # 1. premium (inferred in Ch6) and located in a regulated region
+    ?customer rdf:type         c360:PremiumCustomer ;
+              c360:isLocatedIn ?region .
+    ?region   c360:governedBy  ?regulation .
+
+    # 2. an OPEN, escalated support ticket
+    ?customer c360:raised      ?ticket .
+    ?ticket   c360:status      ?ticketStatus .
+    FILTER (?ticketStatus IN ("open", "escalated"))
+
+    # 3. a product from the RECALLED batch (property path customer->order->product)
+    ?customer c360:placed/c360:contains ?product .
+    ?product  dt:partOfBatch ?batch .
+    ?batch    dt:recalled    true .
+
+    # 4. who owns the account
+    ?customer c360:hasAccount ?account .
+    ?account  c360:ownedBy    ?owner .
+}
+
+
+# === q6_account_owner_for_customer ===
+# A small resolver-backing query used by the GraphQL Account.owner field.
+# Given a customer IRI bound at runtime via VALUES, return account + owner.
+PREFIX c360: <https://ontobricks.example/customer360#>
+
+SELECT ?account ?owner WHERE {
+    VALUES ?customer { c360:Customer4471 }   # bound by the resolver at runtime
+    ?customer c360:hasAccount ?account .
+    ?account  c360:ownedBy    ?owner .
+}
+
+
+# === q7_federated_sanctions ===
+# SPARQL by example #5 — FEDERATION with SERVICE.
+# The Chapter 1 promise: "join your private customer data to a PUBLIC registry."
+# This query keeps customer + region local, then reaches OUT over the network
+# to a public sanctions / company registry endpoint to check whether the
+# customer's controlling entity is sanctioned. SERVICE delegates the inner
+# pattern to the remote endpoint and joins the result back locally.
+# NOTE: the endpoint URL below is illustrative -- swap in a real one to run.
+PREFIX c360: <https://ontobricks.example/customer360#>
+PREFIX reg:  <https://example.org/registry#>
+
+SELECT ?customer ?legalEntity ?sanctioned WHERE {
+    ?customer    c360:controlledBy ?legalEntity .            # local fact
+    SERVICE <https://registry.example.org/sparql> {         # remote endpoint
+        ?legalEntity reg:sanctionStatus ?sanctioned .
+        FILTER (?sanctioned = "listed")
+    }
+}
+
+
+# === q8_count_by_region ===
+# Aggregation: customers per region (powers a GraphQL `customersByRegion` field
+# and a sanity dashboard). GROUP BY + COUNT, the SPARQL analogue of SQL.
+PREFIX c360: <https://ontobricks.example/customer360#>
+
+SELECT ?region (COUNT(?c) AS ?n) WHERE {
+    ?c c360:isLocatedIn ?region .
+}
+GROUP BY ?region
+ORDER BY DESC(?n)
+
+
+# === q9_construct_retention_view ===
+# CONSTRUCT instead of SELECT -- returns a small GRAPH rather than a table.
+# Builds a compact "retention risk" view that the GraphQL layer can expose as
+# a typed RetentionRisk object. Each matching customer yields three triples in
+# a fresh c360:RetentionRisk shape. CONSTRUCT is how SPARQL projects a subgraph,
+# the same machinery Chapter 6 used for its reasoning rules.
+PREFIX c360: <https://ontobricks.example/customer360#>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+CONSTRUCT {
+    ?customer rdf:type        c360:RetentionRisk ;
+              c360:atRiskIn    ?region ;
+              c360:owningAgent ?owner .
+}
+WHERE {
+    ?customer rdf:type         c360:PremiumCustomer ;
+              c360:isLocatedIn ?region ;
+              c360:raised      ?ticket ;
+              c360:hasAccount  ?account .
+    ?region   c360:governedBy  c360:GDPR .
+    ?ticket   c360:status      "escalated" .
+    ?account  c360:ownedBy     ?owner .
+}
